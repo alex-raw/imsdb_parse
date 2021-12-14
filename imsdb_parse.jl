@@ -1,27 +1,27 @@
-mutable struct Line
+struct Line
     full  ::String
     clean ::String
-    onset ::Union{Nothing, Int}
+    onset ::Int
 end
 
 line() = Line("", "", 0)
 
-function line(x)
+function line(x::String)
     nohtml = replace(x, r"<.*?>" => "")
-    clean = strip(nohtml)
     onset = findfirst(r"\S", nohtml)
     onset = isnothing(onset) ? 0 : onset[1]
+    clean = strip(nohtml)
 
     Line(x, clean, onset)
 end
 
-function pre_tag(line)
+function pre_tag(line::Line)::String
     default = "UNC"
     patterns = Dict(
-         "SCENE" => r"^\d+\.?\s*[A-Z]+", # scene numbers? also mostly INT/EXT
-         "PAREN" => r"^\(",              # begin with paren
-         "PAREN" => r"^[^\(]+\)$",       # unpaired closing paren
-         "NAME"  => r"^[A-Z]+$"          # is MOM (OS) same as MOM + paren?
+        "SCENE" => r"^\d+\.?\s*[A-Z]+", # scene numbers? also mostly INT/EXT
+        "PAREN" => r"^\(",              # begin with paren
+        "PAREN" => r"^[^\(]+\)$",       # unpaired closing paren
+        "NAME"  => r"^[A-Z]+$"          # is MOM (OS) same as MOM + paren?
     )
 
     for (tag, pattern) in patterns
@@ -35,25 +35,24 @@ end
 function parse_script(path)
     header = true
     prev = line()
-    tags_used = Set(String[])
+    # tags_used = Set(String[])
+    tags_used = String[]
     # start = r"<pre>"
     start = r"FADE IN"
 
     for (n, x) in enumerate(readlines(path))
         # skip until first match of `start`
-        if header && !occursin(start, x)
-            continue; else header = false
+        if header && occursin(start, x)
+            header = false; else continue
         end
 
         current = line(x)
         tag = pre_tag(current)
+
+        # remember tags per block, flush when enter new block
         push!(tags_used, tag)
-
-        isbeginning = prev.onset - current.onset < 0
-        prev.onset = current.onset
-
-        # flush every time new block is encountered
-        isbeginning && empty!(tags_used)
+        is_deepest = prev.onset - current.onset < 0
+        is_deepest && empty!(tags_used) # slow with `Set` maybe just `String[]`
 
         # debug -----------------------------------
         # if !contains(r"^[A-Z]+$", current)
@@ -63,7 +62,7 @@ function parse_script(path)
         # -----------------------------------------
 
         prev = current
-        join([isbeginning, tags_used, tag, current], "\t", ":\t") |> println
+        join([is_deepest, tags_used, tag, current], "\t", ":\t") |> println
     end
 end
 
