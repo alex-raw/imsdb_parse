@@ -1,6 +1,7 @@
 import os
 from requests import get
 from bs4 import BeautifulSoup
+from multiprocessing.pool import ThreadPool
 
 def get_links(url):
     page = BeautifulSoup(get(url).content, 'html.parser')
@@ -36,6 +37,21 @@ def get_script_urls():
               for episode in series]
     return movies + series
 
+def download_script(url, force=False):
+    title = url.split('/')[-1]
+    filename = f'data/{title}'
+
+    if not force and os.path.exists(filename):
+        return(f"{filename} exists. skipped")
+
+    with get(url, stream=True) as page:
+        page.encoding = page.apparent_encoding
+        if page.status_code in [400, 404]:
+            return(f" {title} doesn't exist")
+        else:
+            with open(filename, 'w') as f:
+                f.write(page.text)
+
 def download_scripts(force=False):
     if not os.path.exists('data'):
         os.makedirs('data')
@@ -43,22 +59,11 @@ def download_scripts(force=False):
     urls = get_script_urls()
     ln = len(urls)
 
-    for count, url in enumerate(urls):
-        filename = 'data/' + url.split('/')[-1]
+    pool = ThreadPool(5).imap_unordered(download_script, urls)
 
-        if not force and os.path.exists(filename):
-            print(f"{filename} exists. skipped")
-            continue
+    for i, _ in enumerate(pool):
+        print(f"\r...downloading imsdb scripts ({i}/{ln})", end="")
 
-        print(f"\r...downloading ({count}/{ln})", end="")
-
-        with get(url, stream=True) as page:
-            if page.status_code in [400, 404]:
-                print(f"{filename} doesn't exist")
-                continue
-            with open(filename, 'wb') as f:
-                for chunk in page.iter_content(chunk_size=8192):
-                    f.write(chunk)
-
-download_scripts()
+if __name__ == "__main__":
+    download_scripts()
 
