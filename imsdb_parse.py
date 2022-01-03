@@ -100,10 +100,10 @@ class Line:
                 # sub-optimal, but conservative since quotes might be missing
                 # and would never find a match
 
-pre_prompt = '{i} {tag}\t{prv}\n'
+pre_prompt = '{i} {tag}  \t{prv}\n'
 prompt = '\
---->\t{cur} \n\
-    \t{fol} \n\n\n\
+------->\t{cur}\n\
+\t\t{fol}\n\n\n\
 ({i}/{ln}) Enter tag, leave blank to discard line, type "exit" to finish in auto mode \n: '
 
 def tag_script(script, annotate=False):
