@@ -25,13 +25,14 @@ par_pattern = re.compile(r'^.?\s?\(.*\)$|^\([^\)]+$|^[^\(]+\)$')
 enquoted    = re.compile(r'^".*"$')
 open_quote  = re.compile(r'^"[^"]+$')
 end_quote   = re.compile(r'^[^"]+"$')
+html_tags_and_marks = re.compile(r'<!--.*?-->|<.*?>|\(X\.?\)', re.S)
 
 def pre_format(script):
     # remove html tags, comments, and other known clutter
     with open(script, 'r') as f:
         x = f.read()
-    x = re.findall(r'(?<=<pre>)(?s:.)*(?=</pre>)', x)[0]
-    x = re.sub(r'<!--(?s:.)*?-->|<(?s:.)*?>|\(X\.?\)', '', x).splitlines()
+    x = re.findall(r'(?<=<pre>).*(?=</pre>)', x, re.S)[0]
+    x = html_tags_and_marks.sub('', x).splitlines()
     x.append('<BUFFER_LINE>')  # since loop will be one behind
     return x
 
@@ -62,94 +63,96 @@ class Line:
             or continued.search(self.clean)
         )
 
-    def disambiguate_caps(self, prev, following):
+    def disambiguate_caps(self, prv, nxt):
         if self.tag == 'unc' and self.no_lower:
             if paired_num.search(self.clean):
                 self.tag = 'scene'
             elif cue.search(self.clean):
                 self.tag = 'cue'
             elif (not self.enquoted
-                  and self.onset > prev.onset
-                  and self.onset > following.onset
-                  ) or following.enquoted:
+                  and self.onset > prv.onset
+                  and self.onset > nxt.onset
+                  ) or nxt.enquoted:
                 self.tag = 'char'
 
-    def detect_tag(self, prev, following):
+    def detect_tag(self, prv, nxt):
         if self.tag != 'unc':
             return
 
-        if prev.tag in ['char', 'par']:
+        if prv.tag in ['char', 'par']:
             self.tag = 'dlg'
-        elif prev.tag in ['scene', 'cue']:
+        elif prv.tag in ['scene', 'cue']:
             self.tag = 'dir'
-        elif (prev.tag == 'dlg'
-              and prev.onset > self.onset
+        elif (prv.tag == 'dlg'
+              and prv.onset > self.onset
               and not self.no_lower):
             self.tag = 'dir'
 
-    def propagate_tags(self, prev, following):
-        if self.tag == 'unc' and self.onset == prev.onset:
-            self.tag = prev.tag
-        elif end_quote.search(self.clean) and prev.tag == 'dlg':
-            self.tag = prev.tag
-        elif open_quote.search(prev.clean):
-            self.tag = prev.tag
+    def propagate_tags(self, prv, nxt):
+        if self.tag == 'unc' and self.onset == prv.onset:
+            self.tag = prv.tag
+        elif end_quote.search(self.clean) and prv.tag == 'dlg':
+            self.tag = prv.tag
+        elif open_quote.search(prv.clean):
+            self.tag = prv.tag
             if not end_quote.search(self.clean):
-                following.tag = prev.tag
+                nxt.tag = prv.tag
                 # sub-optimal, but conservative since quotes might be missing
                 # and would never find a match
 
+pre_prompt = '{i} {tag}\t{prv}\n'
+prompt = '\
+--->\t{cur} \n\
+    \t{fol} \n\n\n\
+({i}/{ln}) Enter tag, leave blank to discard line, type "exit" to finish in auto mode \n: '
 
 def tag_script(script, annotate=False):
     script = pre_format(script)
-    prev = current = Line('')
+    prv = cur = Line('')
     ln = len(script)
     lines, tags = [], []
-    counter = 0
+    n = 0
     break_before = False # only debug eyecandy
 
     for i, x in enumerate(script):
-        following = Line(x)
-        following.break_before = break_before # only debug eyecandy
-        if following.discard():
+        nxt = Line(x)
+        nxt.break_before = break_before # only debug eyecandy
+        if nxt.discard():
             break_before = True # only debug eyecandy
             continue
 
-        current.disambiguate_caps(prev, following)
-        current.detect_tag(prev, following)
-        current.propagate_tags(prev, following)
+        cur.disambiguate_caps(prv, nxt)
+        cur.detect_tag(prv, nxt)
+        cur.propagate_tags(prv, nxt)
 
         # "interactive mode" TODO: factor out or move past this function
         if annotate:
-            sys.stderr.write(f'{i} {prev.tag}\t{prev.raw}\n')
-            if current.tag == 'unc':
-                sys.stderr.write(f'--->\t{current.raw}\n\t{following.raw}\n\n\n')
-                sys.stderr.write(f'({i}/{ln}) Enter tag, leave blank to discard line, type "exit" to finish in auto mode \n: ')
+            sys.stderr.write(pre_prompt.format(i=i, tag=prv.tag, prv=prv.raw))
+            if cur.tag == 'unc':
+                sys.stderr.write(prompt.format(i=i, ln=ln, cur=cur.raw, fol=nxt.raw))
                 user_tag = input()
                 if not user_tag:
-                    current = following
+                    cur = nxt
                     continue
                 elif user_tag == "exit":
                     annotate = False
                 else:
-                    current.tag = user_tag
+                    cur.tag = user_tag
 
-        if current.tag == 'unc':
-            counter += 1
+        n += cur.tag == 'unc'
 
-        out = f'{current.tag}\t{current.raw}'
-        if current.break_before: # only debug eyecandy
-            print(f'\n{out}') # only debug eyecandy
+        out = '{tag}\t{raw}'.format(tag=cur.tag, raw=cur.raw)
+        if cur.break_before: # only debug eyecandy
+            print('\n' + out) # only debug eyecandy
         else:
             print(out)
 
-        lines.append(current.clean)
-        tags.append(current.tag)
+        lines.append(cur.clean)
+        tags.append(cur.tag)
         break_before = False # only debug eyecandy
-        prev, current = current, following
+        prv, cur = cur, nxt
 
-    if counter:
-        sys.stderr.write(f'Failed to classify {counter}/{ln} lines.\n')
+    sys.stderr.write('unclassified lines: {n}/{ln}.\n'.format(n=n, ln=ln))
     return lines, tags
 
 
@@ -172,20 +175,20 @@ def add_xml(path):
 #     else:
 #         return f'<u char="{x}">'
 
-# def add_xml(current, prev, isfirst):
-#     x = current.clean
-#     if current.tag != prev.tag:
-#         if current.tag == "scene":
+# def add_xml(cur, prv, isfirst):
+#     x = cur.clean
+#     if cur.tag != prv.tag:
+#         if cur.tag == "scene":
 #             x = tag_scene(x, isfirst)
-#         elif current.tag == "char":
+#         elif cur.tag == "char":
 #             x = tag_u(x)
 #         else:
-#             x = f"<{current.tag}>\n" + x
+#             x = f"<{cur.tag}>\n" + x
 
-#         if prev.tag == "uc" and not current.tag == "par":
+#         if prv.tag == "uc" and not cur.tag == "par":
 #             x =  "</uc>\n</u>\n" + x
-#         elif current.tag != "pre" and not prev.tag in ["char", "scene"]:
-#             x =  f"</{prev.tag}>\n" + x
+#         elif cur.tag != "pre" and not prv.tag in ["char", "scene"]:
+#             x =  f"</{prv.tag}>\n" + x
 
 #     return x
 
