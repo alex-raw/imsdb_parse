@@ -6,11 +6,10 @@ import re, sys
 non_ws      = re.compile(r'\S')
 ws          = re.compile(r'\s+')
 no_lower    = re.compile(r"^([^a-z]*Mc|[^a-z]*\d(st|nd|rd|th))?[^a-z]+(\(.*?\))?$")
-# tried to catch: 1st WOMAN, 2nd FLOOR, ... McCAMERON, NAME (lower case)
+# tried to catch: 1st WOMAN, 2nd FLOOR, ... McCAMERON, NAME (lower case par)
 # pre_tag regex
 int_ext     = re.compile(r'\b(INT|EXT)\b')
 char_continued = re.compile("[a-z]+\s?(\(.*?\))?\s?\(CON\s?T(INUE|')D\)", re.IGNORECASE)
-# TODO: use same logic as in no_lower
 # discard
 continued   = re.compile(r"con\s?t(inue|')d", re.IGNORECASE)
 lone_num    = r'^(\d.?\.?)+\s?\1?$' # page numbers
@@ -25,16 +24,20 @@ par_pattern = re.compile(r'^.?\s?\(.*\)$|^\([^\)]+$|^[^\(]+\)$')
 enquoted    = re.compile(r'^".*"$')
 open_quote  = re.compile(r'^"[^"]+$')
 end_quote   = re.compile(r'^[^"]+"$')
-html_tags_and_marks = re.compile(r'<!--.*?-->|<.*?>|\(X\.?\)', re.S)
 
 def pre_format(script):
     # remove html tags, comments, and other known clutter
     with open(script, 'r') as f:
         x = f.read()
-    x = re.findall(r'(?<=<pre>).*(?=</pre>)', x, re.S)[0]
-    x = html_tags_and_marks.sub('', x).splitlines()
-    x.append('<BUFFER_LINE>')  # since loop will be one behind
-    return x
+    content = re.findall(r'(?<=<pre>).*(?=</pre>)', x, re.S)
+    out = content[0] if content else x
+    out = re.sub(r'<!--.*?-->|<.*?>|\(X\.?\)', '', out, flags = re.S)
+    out = (out + '\n<BUFFER_LINE>').splitlines()  # buffer since loop will be one behind
+    if len(out) < 50:
+        sys.stderr.write("File appears to be empty: {}\n".format(script))
+        exit()
+    else:
+        return out
 
 
 class Line:
@@ -82,11 +85,11 @@ class Line:
         if prv.tag in ['char', 'par']:
             self.tag = 'dlg'
         elif prv.tag in ['scene', 'cue']:
-            self.tag = 'dir'
+            self.tag = 'act'
         elif (prv.tag == 'dlg'
               and prv.onset > self.onset
               and not self.no_lower):
-            self.tag = 'dir'
+            self.tag = 'act'
 
     def propagate_tags(self, prv, nxt):
         if self.tag == 'unc' and self.onset == prv.onset:
@@ -100,19 +103,19 @@ class Line:
                 # sub-optimal, but conservative since quotes might be missing
                 # and would never find a match
 
-pre_prompt = '{i} {tag}  \t{prv}\n'
-prompt = '\
-------->\t{cur}\n\
-\t\t{fol}\n\n\n\
-({i}/{ln}) Enter tag, leave blank to discard line, type "exit" to finish in auto mode \n: '
 
-def tag_script(script, annotate=False):
-    script = pre_format(script)
+def tag_script(infile, annotate=False):
+    script = pre_format(infile)
     prv = cur = Line('')
     ln = len(script)
     lines, tags = [], []
     n = 0
     break_before = False # only debug eyecandy
+    pre_prompt = '{i} {tag}  \t{prv}\n'
+    prompt = '\
+    ------->\t{cur}\n\
+    \t\t{fol}\n\n\n\
+    ({i}/{ln}) Enter tag, leave blank to discard line, type "exit" to finish in auto mode \n: '
 
     for i, x in enumerate(script):
         nxt = Line(x)
@@ -152,7 +155,8 @@ def tag_script(script, annotate=False):
         break_before = False # only debug eyecandy
         prv, cur = cur, nxt
 
-    sys.stderr.write('unclassified lines: {n}/{ln}.\n'.format(n=n, ln=ln))
+    sys.stderr.write('unclassified lines: {n}/{ln} in {file}.\n'
+                     .format(n=n, ln=ln, file=infile))
     return lines, tags
 
 
@@ -197,4 +201,13 @@ if __name__ == "__main__":
         tag_script(sys.argv[2], sys.argv[1] == "-a")
     else:
         tag_script(sys.argv[1], False)
+
+
+""" TODO:
+- files without <pre>
+- files with [speaker]: [dialogue] (subset of ^----?)
+  - The Village: all dlg because no indentation
+- files with semantic tags. simple search for <.*speaker|act.*>?
+  - get-shorty: act, speaker, dia, spkdir (==par), slug (==scene or cue)
+"""
 
