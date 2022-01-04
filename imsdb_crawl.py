@@ -24,7 +24,9 @@ def crawl_episodes(url, subdir):
 def build_path(url, old_dir, new_dir):
     return url.replace(old_dir, new_dir) \
               .replace(' Script', '') \
-              .replace(' ', '-')
+              .replace(' ', '-') \
+              .replace(':', '') \
+              .replace('&', '%2526')
 
 def get_script_urls():
     url = 'https://www.imsdb.com/'
