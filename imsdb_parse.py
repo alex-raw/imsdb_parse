@@ -1,48 +1,62 @@
 #!/usr/bin/env python
 import re
 import sys
-from signal import signal, SIGPIPE, SIG_DFL
-signal(SIGPIPE, SIG_DFL)
+from html import unescape
+from collections import namedtuple
 
-# join lines with quotes and pars, preserve indentation
-def _join_unpaired(x, o, e):
-    return re.sub(r'^(\s*%s[^%s]*$)\n\s*' % (o, e), r'\1 ', x, flags = re.M)
+Screenplay = namedtuple('Screenplay', ('path', 'data'))
 
-def pre_format(script):
-    with open(script, 'rb') as f:
+def _import_screenplay(path):
+    with open(path, 'rb') as f:
         x = f.read()
     try:
-        x = x.decode('utf-8').replace('\r', '')
+        x = x.decode('utf-8')
     except UnicodeDecodeError:
-        x = x.decode('iso-8859-1').replace('\r', '')
+        x = x.decode('iso-8859-1')
+    return Screenplay(path, x.replace('\r', ''))
 
-    # grab, what's in pre tags, if none are found, warn
-    content = re.findall(r'(?<=<pre>).*(?=</pre>)', x, re.S)
+
+def _grab_content(x):
+    content = re.findall(r'(?<=<pre>).*(?=</pre>)', x.data, re.S)
     if not content:
-        sys.stderr.write('Info: no <pre> tags found in %s\n' % script)
+        data = x.data
+        sys.stderr.write('Info: no <pre> tags found in %s\n' % x.path)
     else:
-        x = content[0]
+        data = content[0]
+    if data.count('\n') < 50:
+        sys.stderr.write('File appears to be empty: %s\n' % data.path)
+        sys.exit()
+    return data
 
-    # remove html tags, comments, and other known clutter
-    x = re.sub(r'<!--.*?-->|<.*?>|\(.?\)', '', x, flags = re.S)
+
+def _join_unpaired(x, o, e, n): # TODO:
+    for _ in range(n):
+        x = re.sub(r'^(\s*{o}[^{e}{o}]*)\n\s*'.format(o=o, e=e), r'\1 ', x, flags = re.M)
+    return x
+
+
+def pre_format(data):
+    # remove html tags, comments, and some clutter
+    data = re.sub(r'<!--.*?-->|<.*?>|\(.?\)', '', data, flags = re.S)
 
     # streamline brackets and latex-style quotes, remove some sporadic characters
-    # fix mixed spacing
-    x = x.translate(x.maketrans('{[]}`', "(())'", '*_|~\\')) \
+    # fix mixed spacing,
+    data = data.translate(data.maketrans('{[]}`', "(())'", '*_|~\\')) \
         .replace('&nbsp;', ' ').expandtabs()
 
-    # conservative limits in case of unpaired
-    for _ in range(5):
-        x = _join_unpaired(x, '"', '"')
-    for _ in range(2):
-        x = _join_unpaired(x, r'\(', r'\)')
+    # Optional: issue in X-men only; consider removal
+    data = data.replace('&igrave;', "'").replace('&iacute;', "'").replace('&icirc;', "'")
 
-    if len(x) < 50:
-        sys.stderr.write('File appears to be empty: {}\n'.format(script))
-        sys.exit()
-    else:
-        # buffer lines since loop will be 2 behind
-        return (x + '\n<BUFFER>\n<BUFFER>').splitlines()
+    # translate html strings, issue in some otherwise also janked up files; consider removal
+    data = unescape(data).replace('&emdash;', '---').replace('&EMDASH;', '---')
+
+    # join lines with quotes and pars, preserve indentation
+    # conservative limits in case of unpaired
+    data = _join_unpaired(data, '"', '"', 5)
+    data = _join_unpaired(data, r'\(', r'\)', 3)
+
+    # buffer lines since loop will be 2 behind
+    return (data + '\n<BUFFER>\n<BUFFER>').splitlines()
 
 
 # pre compile regex for readability and performance in loop
@@ -54,32 +68,33 @@ empty    = re.compile(r'^\W+$')
 num      = re.compile(r'^\s*\D?\d{1,3}\D{0,2}(\s\d*)?\s*$')
 omit     = re.compile(r'\bOMIT.*\b')
 
-# tried to catch: 1st WOMAN, 2nd FLOOR, ... McCAMERON, NAME (lower case par)
+# catch: 1st WOMAN, 2nd FLOOR, ... McCAMERON, NAME (lower case par), CROW's
 slug     = re.compile(r"^([^a-z]*(Mc|\d(st|nd|rd|th)|'s)?)?[^a-z]+(\(.*?\))?$")
 int_ext  = re.compile(r'\b(INT|EXT)(ERIOR)?\b')
-misc_headings = re.compile(r'(?<!^I):|^{x}|{x}$'.format(x='(FADE|CUT|THE END|POV|SCREEN|CREDITS?|TITLES|INTERCUT)'))
-
-# 'CONTINUED' and 'MORE' in all sorts of spellings.
-more        = r'\(\W*\bM[\sORE]{2,}?\b\W*\)'
-continued_r = r'\bCO\W?N\W?[TY](\W?D|INU\W?(ED|ING|ES))?\s*\b'
-cont_more_r = r'^[\W\d]*(%s|%s)[\W\d]*$' % (continued_r, more)
-
-cont_more   = re.compile(cont_more_r, re.I)
-continued   = re.compile(continued_r, re.I)
+misc_headings = '(FADE|CUT|THE END|POV|SCREEN|CREDITS?|TITLES|INTERCUT)'
+misc_headings = re.compile(r'(?<!^I):|^{x}|{x}$'.format(x=misc_headings))
 
 # Catching page headers/footers
 dates_pattern = r'\d+?[\./-]\d+?[\./-]\d+'
-numbering = r'[A-Za-z]?\d+[A-Za-z]?\.?' # TODO: unused
-date_headers = re.compile(r'%s\s%s$' % (dates_pattern, numbering)) # TODO: unused
-page_headers = re.compile(r'\b((rev\.?)|draft|script|shooting|progress)\b', re.I)
+numbering     = r'[A-Za-z]?\d+[A-Za-z]?\.?'
+date_headers  = re.compile(r'%s\s%s$' % (dates_pattern, numbering))
+page_headers  = re.compile(r'\b((rev\.?)|draft|screenplay|shooting|progress)\b', re.I)
+date          = re.compile(dates_pattern)
 
-date = re.compile(dates_pattern)
+# 'CONTINUED' and 'MORE' in all sorts of spellings.
+more        = r'[\(\-]\W*\bM[\sORE]{2,}?\b\W*[\)\-]'
+continued_r = r'\bCO\W?N\W?[TY](\W?D|INU\W?(ED|ING|ES))?\s*\b'
+cont_more_r = r'^({n})?[\W\d]*({}|{})[\W\d]*({n})?$'.format(continued_r, more, n=numbering)
 
+numbering   = re.compile(numbering)
+cont_more   = re.compile(cont_more_r, re.I)
+continued   = re.compile(continued_r, re.I)
 
-untagged = ['unc', 'cont', 'omit', 'num', 'date', 'slug', 'empty']
+preliminary = ['unc', 'cont', 'omit', 'num', 'date', 'slug', 'empty']
+
 
 class Line:
-    def  __init__(self, raw):
+    def  __init__(self, raw: str):
         self.raw         = raw
         self.clean       = ws.sub(' ', raw).strip()
         self.slug        = slug.search(self.clean)
@@ -90,7 +105,7 @@ class Line:
         indent = non_ws.search(raw)
         self.indent = indent.span()[1] if indent else 0
 
-    def debug(self, raw=False):
+    def debug(self, raw=False) -> str:
         x = self.tag + '\t%s' % self.raw if raw else self.clean
         return x + ('\n' if self.break_after else '')
 
@@ -111,15 +126,11 @@ class Line:
 
     # discard if empty or if not potentially part of dialogue
     def discard(self, prv):
-        return not self.indent or not (
-            prv.tag in ['dlg', 'char'] or
-            # prv.break_after or
-            prv.tag == 'par' or
-            self.indent == prv.indent
+        return not self.indent or (
+            not prv.tag in ['dlg', 'char', 'par'] or
+            not self.indent == prv.indent
             ) and (
-            self.tag == 'date' or
-            self.tag == 'empty' or
-            num.search(self.clean) or
+            self.tag in ['date', 'empty', 'num'] or
             omit.search(self.clean) or
             cont_more.search(self.clean)
         ) or (
@@ -127,25 +138,25 @@ class Line:
             page_headers.search(self.clean) and date.search(self.clean)
         )
 
-    def detect_tag(self, prv, nxt):
-        if self.tag in untagged and self.slug and misc_headings.search(self.clean):
-            self.tag = 'trans'
-            # slug whose tag that cannot be overridden
+    def detect_tag(self, prv, nxt, last_dlg_indent):
+        # remove date and cont tags when likely part of block to prevent deletion
+        if self.tag in ['date', 'cont'] and (not prv.break_after or not self.slug):
+            if self.par:
+                self.tag = 'par'
+            elif prv.indent == self.indent:
+                self.tag = prv.tag
 
-        if self.tag in untagged and self.slug and not self.enquoted:
-            if (nxt.enquoted or
+        # reserve some unambiguous slugs as trans to prevent them from being overridden
+        if self.tag in preliminary and self.slug:
+            if misc_headings.search(self.clean):
+                self.tag = 'trans'
+            elif not self.enquoted and nxt.enquoted or (
                 nxt.tag == 'par' or
                 self.indent > prv.indent and self.indent > nxt.indent):
                 self.tag = 'char'
 
-        if self.tag in ['date', 'cont'] and (not prv.break_after or not self.slug):
-            if self.par:
-                self.tag = 'par'
-            if prv.indent == self.indent:
-                self.tag = prv.tag
-
         # infer from previous tags
-        if self.tag in untagged:
+        if self.tag in preliminary:
             if prv.tag == 'char':
                 self.tag = 'dlg'
             elif prv.tag in ['scene', 'slug', 'trans']:
@@ -156,13 +167,14 @@ class Line:
                     self.tag = 'act'
 
         # propagate tags with same formatting
-        if self.tag in untagged:
-            if self.indent == prv.indent:
+        if self.tag in preliminary:
+            # if abs(self.indent - prv.indent) <= 1:
+            if abs(self.indent - prv.indent) <= 0:
                 if prv.tag == 'act' or not prv.break_after and prv.tag == 'dlg':
                     self.tag = prv.tag
 
         # carry over tag past pars
-        if nxt.tag in untagged and self.tag == 'par':
+        if nxt.tag in preliminary and self.tag == 'par':
             if prv.tag == 'char':
                 nxt.tag = 'dlg'
             elif nxt.indent == prv.indent:
@@ -177,8 +189,11 @@ class Line:
         if self.tag == 'act' and self.slug or self.tag == 'trans':
             self.tag = 'slug'
 
+        # if self.tag in preliminary and self.indent == last_dlg_indent and self.indent > 10:
+        #     self.tag = 'dlg'
+
+
 def _annotate_tag(prv, cur, nxt, i, ln):
-    # TODO: list and number choices, make option for all dlg
     pre_prompt = '{i} {tag}  \t{prv}\n'
     prompt = '\
     ------->\t{cur}\n\
@@ -187,23 +202,20 @@ def _annotate_tag(prv, cur, nxt, i, ln):
     sys.stderr.write(pre_prompt.format(i=i, tag=prv.tag, prv=prv.raw))
     if cur.tag == 'unc':
         sys.stderr.write(prompt.format(i=i, ln=ln, cur=cur.raw, fol=nxt.raw))
-        return input()
+        out = input()
+
+    return out if out else ''
 
 
-def tag_script(infile, interactive=False, debug=True):
-    script = pre_format(infile)
+def tag_screenplay(data, name, interactive=False, debug=True):
     prv = cur = nxt = Line('')
-    ln = len(script)
     lines, tags = [], []
-    n = 0
+    n, ln = 0, len(data)
+    last_dlg_indent = 0
 
-    for i, x in enumerate(script):
+    for i, x in enumerate(data):
         nxt = Line(x)
         nxt.pre_tag()
-
-        # reset indentation level for one-line tags, (fix right aligned slugs and clutter)
-        if nxt.tag in ['scene', 'par']:
-            nxt.indent = 1
 
         if nxt.discard(cur):
             if debug and nxt.indent:
@@ -212,15 +224,23 @@ def tag_script(infile, interactive=False, debug=True):
             ln -= 1
             continue
 
-        cur.detect_tag(prv, nxt)
+        cur.detect_tag(prv, nxt, last_dlg_indent)
+
+        # reset indentation level for one-line tags, (fix right aligned slugs and clutter)
+        if nxt.tag in ['scene', 'par', 'trans']:
+            nxt.indent = 1
 
         # clean up remaining clutter after making sure, it's not relevant
         if cur.tag in ['cont', 'omit', 'num', 'date', 'empty']:
             if debug:
                 sys.stderr.write('%d removed2\t%s\n' % (ln, cur.raw))
+            nxt.break_after = cur.break_after
             cur = nxt
             ln -= 1
             continue
+
+        if cur.tag == 'dlg':
+            last_dlg_indent = cur.indent
 
         if interactive:
             user_tag = _annotate_tag(prv, cur, nxt, i, ln)
@@ -240,14 +260,20 @@ def tag_script(infile, interactive=False, debug=True):
         n += prv.tag == 'unc'
         prv, cur = cur, nxt
 
-    sys.stderr.write('{perc:.2f} unclassified: {n}/{ln} in {file}.\n\n'
-                     .format(perc=n/ln, n=n, ln=ln, file=infile))
+    sys.stderr.write('{perc:.2f} unclassified: {n}/{ln} in {name}.\n\n'
+                     .format(perc=n/ln, n=n, ln=ln, name=name))
     return lines, tags
+
+
+def main(path, interactive=False, debug=True):
+    script = _import_screenplay(path)
+    screenplay = pre_format(_grab_content(script))
+    tag_screenplay(screenplay, script.path, interactive, debug)
 
 
 # # TODO:
 # def add_xml(path):
-#     lines, tags = tag_script(path)
+#     lines, tags = tag_screenplay(path)
 #     for line, tag in zip(lines, tags):
 #         pass
 
@@ -281,8 +307,16 @@ def tag_script(infile, interactive=False, debug=True):
 
 #     return x
 
-if __name__ == "__main__":
-    if len(sys.argv) == 3:
-        tag_script(sys.argv[2], sys.argv[1] == "-a")
-    else:
-        tag_script(sys.argv[1], False)
+if __name__ == '__main__':
+    import argparse
+    from signal import signal, SIGPIPE, SIG_DFL
+    signal(SIGPIPE, SIG_DFL)
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('path', help='path to html file')
+    parser.add_argument('-a', '--annotate', action='store_true',
+                        help='interactively annotate unclassifiable lines')
+    parser.add_argument('-q', '--quiet', action='store_true',
+                        help='disable debugging information printed to stderr')
+    args = parser.parse_args()
+    main(args.path, args.annotate, not args.quiet)
