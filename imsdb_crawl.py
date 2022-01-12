@@ -1,7 +1,7 @@
 import os
+from multiprocessing.pool import ThreadPool
 from requests import get
 from bs4 import BeautifulSoup
-from multiprocessing.pool import ThreadPool
 
 def get_links(url):
     page = BeautifulSoup(get(url).content, 'html.parser')
@@ -44,14 +44,14 @@ def download_script(url, force=False):
     filename = f'data/{title}'
 
     if not force and os.path.exists(filename):
-        return(f"{filename} exists. skipped")
+        print(f"{filename} exists. skipped")
 
     with get(url, stream=True) as page:
         page.encoding = page.apparent_encoding
         if page.status_code in [400, 404]:
-            return(f" {title} doesn't exist")
+            print(f" {title} doesn't exist")
         else:
-            with open(filename, 'w') as f:
+            with open(filename, 'w', encoding='utf-8') as f:
                 f.write(page.text)
 
 def download_scripts(force=False):
@@ -61,11 +61,11 @@ def download_scripts(force=False):
     urls = get_script_urls()
     ln = len(urls)
 
-    pool = ThreadPool(5).imap_unordered(download_script, urls)
+    # TODO: async and sessions
+    pool = ThreadPool(5).imap_unordered(download_script, urls, force)
 
     for i, _ in enumerate(pool):
         print(f"\r...downloading imsdb scripts ({i}/{ln})", end="")
 
 if __name__ == "__main__":
     download_scripts()
-
