@@ -5,6 +5,9 @@ import logging
 import readline # changes behavior of input()
 from html import unescape
 from textwrap import dedent
+from itertools import pairwise
+import xml.etree.ElementTree as et
+
 
 # pre compile regex for readability and performance in loop
 ws      = re.compile(r'\s+')
@@ -25,17 +28,18 @@ misc_headings = re.compile(r'(?<!^I):|^{x}\b|\b{x}$'.format(x=misc_headings))
 dates_r      = r'\d+?[\./]\d+?[\./]\d+'
 more         = r'[\(\-]\W*\bM[\sORE]{2,}?\b\W*[\)\-]'
 continued_r  = r'\bCO\W?N\W?[TY](\W?D|INU\W?(ED|ING|ES))?\s*\b'
-ids          = r'\D?\d+\D?\d*\.?'
-cont_more_r  = r'^({n})?[\W\d]*({}|{})[\W\d]*({n})?$'.format(continued_r, more, n=ids)
-numbered     = re.compile(r'^{n}|{n}$'.format(n=ids))
+ids_r          = r'\D?\d+\D?\d*\.?'
+cont_more_r  = r'^({n})?[\W\d]*({}|{})[\W\d]*({n})?$'.format(continued_r, more, n=ids_r)
+numbered     = re.compile(r'^{n}|{n}$'.format(n=ids_r))
 page_headers = r'(rev(\.|isions?)?|draft|screenplay|shooting|progress|scene deleted|pdf)'
 page_headers = re.compile(r'\b%s\b' % page_headers, re.I)
 date         = re.compile(dates_r)
 continued    = re.compile(continued_r)
 cont_more    = re.compile(cont_more_r, re.I)
-date_headers = re.compile(r'%s\s%s$' % (dates_r, ids))
+date_headers = re.compile(r'%s\s%s$' % (dates_r, ids_r))
 page         = re.compile(r'\b(PAGE|pg)\b[\s\.]?\d')
-paired_num   = re.compile(r'^(%s).{3,}?\1$' % ids)
+paired_num   = re.compile(r'^(%s).{3,}?\1$' % ids_r)
+ids          = re.compile(ids_r)
 
 clutter  = ['remove', 'date', 'cont']
 pre_tags = clutter + ['unc', 'slug']
@@ -58,7 +62,7 @@ class Line:
 
     def pre_tag(self):
         patterns = (('remove', empty), ('remove', num), ('remove', omit),
-                    ('hdr', int_ext),
+                    ('hdg', int_ext),
                     ('date', date),
                     ('cont', continued),
                     ('par', par),
@@ -71,9 +75,9 @@ class Line:
                 break
 
         if self.tag not in clutter and self.slug and paired_num.search(self.clean):
-            self.tag = 'hdr'
+            self.tag = 'hdg'
 
-        if self.tag in ['hdr', 'par', 'trans']:
+        if self.tag in ['hdg', 'par', 'trans']:
             self.indent = 1
 
         return self
@@ -112,7 +116,7 @@ class Line:
             if self.par:
                 tag = 'par'
             elif abs(prv_dif) < 5:
-                if prv.tag == 'hdr':
+                if prv.tag == 'hdg':
                     tag = 'act'
                 else:
                     tag = prv.tag
@@ -121,7 +125,7 @@ class Line:
         if tag in pre_tags:
             if prv.tag == 'char':
                 tag = 'dlg'
-            elif prv.tag in ['hdr', 'trans', 'slug']:
+            elif prv.tag in ['hdg', 'trans', 'slug']:
                 tag = 'act'
             elif prv.tag in ['dlg', 'act']:
                 if not self.slug and prv_dif < 0:
@@ -261,6 +265,65 @@ def tag_screenplay(script, interactive=False, force=False):
     del script.lines[-1]
 
 
+def _join_blocks(script):
+    tags = [script.lines[0].tag]
+    line = [script.lines[0].clean]
+    lines = []
+    for a, b in pairwise(script.lines):
+        if a.tag == b.tag:
+            line.append(b.clean)
+        else:
+            tags.append(b.tag)
+            lines.append('\n'.join(line))
+            line = [b.clean]
+    return tags, lines
+
+
+def screenplay2xml(script, path):
+    root = et.Element('')
+    root = et.SubElement(root, "screenplay",path=path)
+
+    current_level = root
+    scene = None
+    for tag, line in zip(*_join_blocks(script)):
+        if 'RM' in tag:
+            continue
+
+        if tag == 'hdg':
+            n = ids.findall(line)
+            scene = et.SubElement(root, 'scene',
+                id = n[0] if n else '',
+                heading = ids.sub('', line)
+            )
+
+            hdg = et.SubElement(scene, 'hdg')
+            hdg.text = line
+            current_level = scene
+
+        elif tag == 'char':
+            par = re.findall(r'\((.*)\)', line)
+            turn = et.SubElement(scene or root, 'turn',
+                char = re.sub(r'\s?\(.*\)', '', line),
+                ext = par[0] if par else ''
+            )
+
+            char = et.SubElement(turn, 'char')
+            char.text = line
+            current_level = turn
+
+        elif tag == 'slug':
+            current_level = scene or root
+            slug = et.SubElement(current_level, 'slug')
+            slug.text = line
+
+        else:
+            dlg = et.SubElement(current_level, tag)
+            dlg.text = line
+
+    et.indent(root, '')
+    return et.ElementTree(root)
+
+
 def _import_screenplay(path):
     with open(path, 'rb') as f:
         x = f.read()
@@ -270,7 +333,7 @@ def _import_screenplay(path):
         return x.decode('iso-8859-1')
 
 
-def _main(path, interactive=False, force=False):
+def _main(path, interactive=False, force=False, xml=False):
     raw = _import_screenplay(path)
 
     try:
@@ -292,6 +355,12 @@ def _main(path, interactive=False, force=False):
     ln = len(screenplay.lines) - screenplay.rm
     logging.info('%.3f unclassified: %d/%d in %s', unc/ln, unc, ln, screenplay.name)
 
+    if xml:
+        tree = screenplay2xml(screenplay, path)
+        out_path = path.replace('.html', '') + '.xml'
+        tree.write(out_path, encoding ='utf-8')
+        logging.info('created %s', path.replace('html', 'xml'))
+
 
 if __name__ == '__main__':
     import argparse
@@ -308,48 +377,12 @@ if __name__ == '__main__':
                    help='print tagged lines to stderr')
     p.add_argument('-q', '--quiet', action='store_true',
                    help='do print any logging information')
+    p.add_argument('-x', '--xml', action='store_true',
+                   help='create an xml representation of the parsed file')
     args = p.parse_args()
 
     if not args.quiet:
         logging.basicConfig(format = '%(levelname)s: %(message)s',
                             level = args.debug or 'INFO')
 
-    _main(args.path, args.annotate, args.force)
-
-
-# # TODO: hdrs could be two lines long (with par)
-# # gather same tags first
-# for line, tag in zip(data[0], data[1]):
-#     if tag == 'hdr':
-#         print(tag_hdr(line))
-
-# ids_r = re.compile(ids)
-# def tag_hdr(x):
-#     n = re.findall(ids_r, x)
-#     n = n[0] if n else ''
-#     title = ids_r.sub('', x)
-#     out = f'<scene id="{n}" title="{title}">'
-#     return out
-
-# def tag_u(x):
-#     if "(" in x:
-#         return char_cap.sub(r'<u char="\1">\n<par> \2 <par>', x)
-#     else:
-#         return f'<u char="{x}">'
-
-# def add_xml(cur, prv, isfirst):
-#     x = cur.clean
-#     if cur.tag != prv.tag:
-#         if cur.tag == "hdr":
-#             x = tag_hdr(x, isfirst)
-#         elif cur.tag == "char":
-#             x = tag_u(x)
-#         else:
-#             x = f"<{cur.tag}>\n" + x
-
-#         if prv.tag == "uc" and not cur.tag == "par":
-#             x =  "</uc>\n</u>\n" + x
-#         elif cur.tag != "pre" and not prv.tag in ["char", "hdr"]:
-#             x =  f"</{prv.tag}>\n" + x
-
-#     return x
+    _main(args.path, args.annotate, args.force, args.xml)
