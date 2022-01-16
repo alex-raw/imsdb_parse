@@ -5,9 +5,8 @@ import logging
 import readline # changes behavior of input()
 from html import unescape
 from textwrap import dedent
-from itertools import pairwise
+from itertools import tee
 import xml.etree.ElementTree as et
-
 
 # pre compile regex for readability and performance in loop
 ws      = re.compile(r'\s+')
@@ -265,6 +264,12 @@ def tag_screenplay(script, interactive=False, force=False):
     del script.lines[-1]
 
 
+def pairwise(iterable):
+    a, b = tee(iterable)
+    next(b, None)
+    return zip(a, b)
+
+
 def _join_blocks(script):
     tags = [script.lines[0].tag]
     line = [script.lines[0].clean]
@@ -320,7 +325,7 @@ def screenplay2xml(script, path):
             dlg = et.SubElement(current_level, tag)
             dlg.text = line
 
-    et.indent(root, '')
+    # et.indent(root, '')
     return et.ElementTree(root)
 
 
