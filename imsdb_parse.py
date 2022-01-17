@@ -5,7 +5,7 @@ import logging
 import readline # changes behavior of input()
 from html import unescape
 from textwrap import dedent
-from itertools import tee
+from itertools import pairwise
 import xml.etree.ElementTree as et
 
 # pre compile regex for readability and performance in loop
@@ -21,24 +21,24 @@ slug          = re.compile(r"^([^a-z]*(Mc|\d(st|nd|rd|th)|'s)?)?[^a-z]+(\(.*?\))
 int_ext       = re.compile(r'\b(INT|EXT)(ERIOR)?\b|\b(I\/E|E\/I)\b')
 par_pattern   = re.compile(r'^\([^\)]+$|^[^\(]+\)$')
 misc_headings = r'(FADE|CUT|THE END|POV|SCREEN|CREDITS?|TITLES|INTERCUT)'
-misc_headings = re.compile(r'(?<!^I):|^{x}\b|\b{x}$'.format(x=misc_headings))
+misc_headings = re.compile(fr'(?<!^I):|^{misc_headings}\b|\b{misc_headings}$')
 
 # Catching page headers/footers
-dates_r      = r'\d+?[\./]\d+?[\./]\d+'
+dates        = r'\d+?[\./]\d+?[\./]\d+'
 more         = r'[\(\-]\W*\bM[\sORE]{2,}?\b\W*[\)\-]'
-continued_r  = r'\bCO\W?N\W?[TY](\W?D|INU\W?(ED|ING|ES))?\s*\b'
-ids_r          = r'\D?\d+\D?\d*\.?'
-cont_more_r  = r'^({n})?[\W\d]*({}|{})[\W\d]*({n})?$'.format(continued_r, more, n=ids_r)
-numbered     = re.compile(r'^{n}|{n}$'.format(n=ids_r))
+continued    = r'\bCO\W?N\W?[TY](\W?D|INU\W?(ED|ING|ES))?\s*\b'
+ids          = r'\D?\d+\D?\d*\.?'
+cont_more    = fr'^({ids})?[\W\d]*({continued}|{continued})[\W\d]*({ids})?$'
+numbered     = re.compile(fr'^{ids}|{ids}$')
 page_headers = r'(rev(\.|isions?)?|draft|screenplay|shooting|progress|scene deleted|pdf)'
-page_headers = re.compile(r'\b%s\b' % page_headers, re.I)
-date         = re.compile(dates_r)
-continued    = re.compile(continued_r)
-cont_more    = re.compile(cont_more_r, re.I)
-date_headers = re.compile(r'%s\s%s$' % (dates_r, ids_r))
+page_headers = re.compile(fr'\b{page_headers}\b', re.I)
+continued    = re.compile(continued)
+cont_more    = re.compile(cont_more, re.I)
+date_headers = re.compile(fr'{dates}\s{ids}$')
 page         = re.compile(r'\b(PAGE|pg)\b[\s\.]?\d')
-paired_num   = re.compile(r'^(%s).{3,}?\1$' % ids_r)
-ids          = re.compile(ids_r)
+paired_num   = re.compile(fr'^({ids}).{{3,}}?\1$')
+date         = re.compile(dates)
+ids          = re.compile(ids)
 
 clutter  = ['remove', 'date', 'cont']
 pre_tags = clutter + ['unc', 'slug']
@@ -51,13 +51,12 @@ class Line:
         self.break_after = False
         self.clean  = ws.sub(' ', raw).strip()
         self.slug   = slug.search(self.clean)
-        self.par    = par.search(self.clean)
         self.tag    = 'slug' if self.slug else 'unc'
         indent      = non_ws.search(raw)
         self.indent = indent.span()[1] if indent else 0
 
     def __str__(self):
-        return '%d\t%s\t\t%s' % (self.ind, self.tag, self.raw)
+        return f'{self.ind}\t{self.tag}\t\t{self.raw}'
 
     def pre_tag(self):
         patterns = (('remove', empty), ('remove', num), ('remove', omit),
@@ -83,36 +82,39 @@ class Line:
 
     # discard if empty or if not potentially part of dialogue
     def is_clutter(self, prv) -> bool:
+        line = self.clean
         return not self.indent or (
             self.tag in ['remove', 'date']
             ) and (
             not prv.tag in ['char', 'par', 'dlg'] or
             not self.indent == prv.indent
         ) or (
-            page.search(self.clean) or
-            date_headers.search(self.clean) or
-            cont_more.search(self.clean) or
-            page_headers.search(self.clean) and (
-                 numbered.search(self.clean) or date.search(self.clean)
-        ))
+            page.search(line) or
+            date_headers.search(line) or
+            cont_more.search(line) or
+            page_headers.search(line) and (
+                numbered.search(line) or date.search(line))
+        )
 
     def detect_tag(self, prv, nxt):
+        tag     = self.tag
         prv_dif = self.indent - prv.indent
         nxt_dif = self.indent - nxt.indent
-        tag = self.tag
-        start = prv.break_after
+        start   = prv.break_after
+        end     = self.break_after
+        ispar   = par.search(self.clean)
 
         if tag in pre_tags and self.slug:
             # reserve some unambiguous slugs as trans to prevent them from being overridden
             if misc_headings.search(self.clean):
                 tag = 'trans'
-            elif nxt.tag == 'par' or nxt_dif > 0 and not self.par and (
-                prv_dif > 0 or start and not self.break_after):
+            elif nxt.tag == 'par' or nxt_dif and not ispar and (
+                prv_dif or start and not end):
                 tag = 'char'
 
         # remove date and cont tags when likely part of block to prevent deletion
         if tag in ['date', 'cont'] and (not start or not self.slug):
-            if self.par:
+            if ispar:
                 tag = 'par'
             elif abs(prv_dif) < 5:
                 if prv.tag == 'hdg':
@@ -127,20 +129,20 @@ class Line:
             elif prv.tag in ['hdg', 'trans', 'slug']:
                 tag = 'act'
             elif prv.tag in ['dlg', 'act']:
-                if not self.slug and prv_dif < 0:
+                if not self.slug and prv_dif:
                     tag = 'act'
 
         # catch some pars with missing open or close pars
         if tag in pre_tags and par_pattern.search(self.clean):
             tag = 'par'
 
-        if tag == 'par' and prv.tag not in ['dlg', 'char', 'slug'] and not start:
+        if tag == 'par' and not start and prv.tag not in ['dlg', 'char', 'slug']:
             tag = prv.tag
 
         # tolerate slight difference in indentation
-        if tag in pre_tags + ['act']:
-            if abs(prv_dif) <= 1 and (prv.tag in 'act' or prv.tag == 'dlg' and not start):
-                tag = prv.tag
+        if tag in pre_tags + ['act'] and abs(prv_dif) <= 1 and (
+            prv.tag == 'act' or prv.tag == 'dlg' and not start):
+            tag = prv.tag
 
         # reset trans to general slug
         if tag in ['trans', 'act'] and self.slug:
@@ -157,7 +159,7 @@ class Line:
                 elif abs(nxt.indent - prv.indent) <= 1:
                     nxt.tag = prv.tag
             if tag == 'act' and prv.tag == 'dlg' and nxt.indent == prv.indent and (
-                not start and not self.break_after):
+                not start and not end):
                 nxt.tag = 'dlg'
 
         self.tag = tag
@@ -175,7 +177,7 @@ class Screenplay:
         return self
 
     def pre_format(self):
-        data = re.sub(r'<!--.*?-->|<.*?>|\(.?\)', '', self.raw, flags = re.S)
+        data = re.sub(r'<!--.*?-->|<.*?>|\(.?\)', '', self.raw, flags=re.S)
 
         # streamline brackets and latex-style quotes, remove some sporadic characters
         # fix mixed spacing,
@@ -194,24 +196,24 @@ class Screenplay:
 
         # join lines with pars; conservative limits in case of unpaired
         for _ in range(5):
-            data = re.sub(r'(\([^\)]*?)\n\s*([^\(\)]*\))', r'\1 \2', data, flags = re.M)
+            data = re.sub(r'(\([^\)]*?)\n\s*([^\(\)]*\))', r'\1 \2', data, flags=re.M)
 
         self.raw = data
         return self
 
 
 def _annotate(prv, cur, nxt, ln, force):
-    m = dedent("""\
-    ---------->\t\t%s
-    %s
+    prompt = dedent(f'''\
+    ---------->\t\t{cur.raw}
+    {str(nxt)}
 
     Leave blank to discard line;
     type 'start' to exit force mode; type 'exit' to continue in auto mode
-    (%d/%d) Enter tag: """ % (cur.raw, str(nxt), cur.ind, ln))
+    ({cur.ind}/{ln}) Enter tag: ''')
 
     print(prv, file=sys.stderr)
     if force or cur.tag == 'unc':
-        print(m, file=sys.stderr)
+        print(prompt, file=sys.stderr)
         user_tag = input()
         return user_tag
     return cur.tag
@@ -264,24 +266,14 @@ def tag_screenplay(script, interactive=False, force=False):
     del script.lines[-1]
 
 
-def pairwise(iterable):
-    a, b = tee(iterable)
-    next(b, None)
-    return zip(a, b)
-
-
 def _join_blocks(script):
-    tags = [script.lines[0].tag]
-    line = [script.lines[0].clean]
-    lines = []
+    line = script.lines[0].clean
     for a, b in pairwise(script.lines):
         if a.tag == b.tag:
-            line.append(b.clean)
+            line += '\n' + b.clean
         else:
-            tags.append(b.tag)
-            lines.append('\n'.join(line))
-            line = [b.clean]
-    return tags, lines
+            yield a.tag, line
+            line = b.clean
 
 
 def screenplay2xml(script, path):
@@ -290,7 +282,7 @@ def screenplay2xml(script, path):
 
     current_level = root
     scene = None
-    for tag, line in zip(*_join_blocks(script)):
+    for tag, line in _join_blocks(script):
         if 'RM' in tag:
             continue
 
@@ -300,7 +292,6 @@ def screenplay2xml(script, path):
                 id = n[0] if n else '',
                 heading = ids.sub('', line)
             )
-
             hdg = et.SubElement(scene, 'hdg')
             hdg.text = line
             current_level = scene
@@ -311,7 +302,6 @@ def screenplay2xml(script, path):
                 char = re.sub(r'\s?\(.*\)', '', line),
                 ext = par[0] if par else ''
             )
-
             char = et.SubElement(turn, 'char')
             char.text = line
             current_level = turn
@@ -322,10 +312,10 @@ def screenplay2xml(script, path):
             slug.text = line
 
         else:
-            dlg = et.SubElement(current_level, tag)
-            dlg.text = line
+            content = et.SubElement(current_level, tag)
+            content.text = line
 
-    # et.indent(root, '')
+    et.indent(root, '')
     return et.ElementTree(root)
 
 
@@ -364,7 +354,7 @@ def _main(path, interactive=False, force=False, xml=False):
         tree = screenplay2xml(screenplay, path)
         out_path = path.replace('.html', '') + '.xml'
         tree.write(out_path, encoding ='utf-8')
-        logging.info('created %s', path.replace('html', 'xml'))
+        logging.info('created %s', out_path)
 
 
 if __name__ == '__main__':
