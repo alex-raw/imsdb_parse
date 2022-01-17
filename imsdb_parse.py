@@ -264,15 +264,11 @@ def tag_screenplay(script, interactive=False, force=False):
     del script.lines[-1]
 
 
-def pairwise(iterable):
-    a, b = tee(iterable)
-    next(b, None)
-    return zip(a, b)
-
-
 def _join_blocks(script):
+    a, b = tee(script.lines)
+    next(b, None)
     line = script.lines[0].clean
-    for a, b in pairwise(script.lines):
+    for a, b in zip(a, b):
         if a.tag == b.tag:
             line += '\n' + b.clean
         else:
@@ -321,7 +317,6 @@ def screenplay2xml(script, path):
             dlg = et.SubElement(current_level, tag)
             dlg.text = line
 
-    # et.indent(root, '')
     return et.ElementTree(root)
 
 
