@@ -271,17 +271,13 @@ def pairwise(iterable):
 
 
 def _join_blocks(script):
-    tags = [script.lines[0].tag]
-    line = [script.lines[0].clean]
-    lines = []
+    line = script.lines[0].clean
     for a, b in pairwise(script.lines):
         if a.tag == b.tag:
-            line.append(b.clean)
+            line += '\n' + b.clean
         else:
-            tags.append(b.tag)
-            lines.append('\n'.join(line))
-            line = [b.clean]
-    return tags, lines
+            yield a.tag, line
+            line = b.clean
 
 
 def screenplay2xml(script, path):
@@ -290,7 +286,7 @@ def screenplay2xml(script, path):
 
     current_level = root
     scene = None
-    for tag, line in zip(*_join_blocks(script)):
+    for tag, line in _join_blocks(script):
         if 'RM' in tag:
             continue
 
@@ -364,7 +360,7 @@ def _main(path, interactive=False, force=False, xml=False):
         tree = screenplay2xml(screenplay, path)
         out_path = path.replace('.html', '') + '.xml'
         tree.write(out_path, encoding ='utf-8')
-        logging.info('created %s', path.replace('html', 'xml'))
+        logging.info('created %s', out_path)
 
 
 if __name__ == '__main__':
