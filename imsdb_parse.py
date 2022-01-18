@@ -20,20 +20,18 @@ omit    = re.compile(r'\b(OMIT.*|DELETED)\b')
 slug          = re.compile(r"^([^a-z]*(Mc|\d(st|nd|rd|th)|'s)?)?[^a-z]+(\(.*?\))?$")
 int_ext       = re.compile(r'\b(INT|EXT)(ERIOR)?\b|\b(I\/E|E\/I)\b')
 par_pattern   = re.compile(r'^\([^\)]+$|^[^\(]+\)$')
-misc_headings = r'(FADE|CUT|THE END|POV|SCREEN|CREDITS?|TITLES|INTERCUT)'
-misc_headings = re.compile(fr'(?<!^I):|^{misc_headings}\b|\b{misc_headings}$')
+headings      = r'(FADE|CUT|THE END|POV|SCREEN|CREDITS?|TITLES|INTERCUT)'
+misc_headings = re.compile(fr'(?<!^I):|^{headings}\b|\b{headings}$')
 
 # Catching page headers/footers
 dates        = r'\d+?[\./]\d+?[\./]\d+'
 more         = r'[\(\-]\W*\bM[\sORE]{2,}?\b\W*[\)\-]'
-continued    = r'\bCO\W?N\W?[TY](\W?D|INU\W?(ED|ING|ES))?\s*\b'
+cont         = r'\bCO\W?N\W?[TY](\W?D|INU\W?(ED|ING|ES))?\s*\b'
 ids          = r'\D?\d+\D?\d*\.?'
-cont_more    = fr'^({ids})?[\W\d]*({continued}|{continued})[\W\d]*({ids})?$'
 numbered     = re.compile(fr'^{ids}|{ids}$')
-page_headers = r'(rev(\.|isions?)?|draft|screenplay|shooting|progress|scene deleted|pdf)'
-page_headers = re.compile(fr'\b{page_headers}\b', re.I)
-continued    = re.compile(continued)
-cont_more    = re.compile(cont_more, re.I)
+page_headers = re.compile(r'\b(rev(\.|isions?)?|draft|screenplay|shooting|progress|scene deleted|pdf)\b', re.I)
+continued    = re.compile(cont)
+cont_more    = re.compile(fr'^({ids})?[\W\d]*({cont}|{more})[\W\d]*({ids})?$', re.I)
 date_headers = re.compile(fr'{dates}\s{ids}$')
 page         = re.compile(r'\b(PAGE|pg)\b[\s\.]?\d')
 paired_num   = re.compile(fr'^({ids}).{{3,}}?\1$')
@@ -68,7 +66,7 @@ class Line:
                    )
 
         for tag, pattern in patterns:
-            if pattern.search(self.clean):
+            if re.search(pattern, self.clean):
                 self.tag = tag
                 break
 
@@ -88,7 +86,7 @@ class Line:
             ) and (
             not prv.tag in ['char', 'par', 'dlg'] or
             not self.indent == prv.indent
-        ) or (
+        ) or bool(
             page.search(line) or
             date_headers.search(line) or
             cont_more.search(line) or
@@ -169,8 +167,11 @@ class Screenplay:
     def __init__(self, data, name):
         self.name = name
         self.raw = data
-        self.lines = None
+        self.lines = []
         self.unc = self.rm = 0
+
+    def __len__(self):
+        return len(self.lines)
 
     def parse_lines(self):
         self.lines = [Line(x, i).pre_tag() for i, x in enumerate(self.raw.splitlines())]
@@ -338,7 +339,7 @@ def _main(path, interactive=False, force=False, xml=False):
 
     screenplay = Screenplay(raw, path).pre_format().parse_lines()
 
-    if len(screenplay.lines) < 50:
+    if len(screenplay) < 50:
         logging.error('File appears to be empty or incomplete: %s', screenplay.name)
         sys.exit(1)
 
