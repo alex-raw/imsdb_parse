@@ -1,71 +1,65 @@
 import os
-from multiprocessing.pool import ThreadPool
-from requests import get
+from itertools import chain
+import asyncio
+import aiohttp
+import aiofiles
+import requests
 from bs4 import BeautifulSoup
 
-def get_links(url):
-    page = BeautifulSoup(get(url).content, 'html.parser')
-    return [link.get('href') for link in page.find_all('a')]
 
-def crawl_titles(url, subdir):
-    titles = []
-    for link in get_links(url):
+def get_titles(url, subdir):
+    page = BeautifulSoup(requests.get(url).content, 'html.parser')
+    for link in page.find_all('a'):
+        link = link.get('href')
         if subdir in link:
-            titles.append(link)
-    return titles
+            yield link
 
-def crawl_episodes(url, subdir):
-    titles = []
-    for show in crawl_titles(url, '/TV/'):
-        episodes = crawl_titles(url + show, subdir)
-        titles = titles + episodes
-    return titles
 
-def build_path(url, old_dir, new_dir):
-    return url.replace(old_dir, new_dir) \
+def build_path(url, title, old_dir, new_dir):
+    return url + title.replace(old_dir, new_dir) \
               .replace(' Script', '') \
               .replace(' ', '-') \
               .replace(':', '') \
               .replace('&', '%2526')
 
+
 def get_script_urls():
     url = 'https://www.imsdb.com/'
     movie_dir, tv_dir = 'Movie Scripts/', 'TV Transcripts/'
-    movies = crawl_titles(url + 'all-scripts.html', movie_dir)
-    series = crawl_episodes(url, tv_dir)
-    movies = [url + build_path(movie, movie_dir, 'scripts/')
-              for movie in movies]
-    series = [url + build_path(episode, tv_dir, 'transcripts/')
-              for episode in series]
+
+    movies = [build_path(url, movie, movie_dir, 'scripts/')
+              for movie in get_titles(url + 'all-scripts.html', movie_dir)]
+    series = [get_titles(url + show, tv_dir) for show in get_titles(url, 'TV/')]
+    series = [build_path(url, episode, tv_dir, 'transcripts/')
+              for episode in chain(*series)]
     return movies + series
 
-def download_script(url, force=False):
+
+async def download_script(url, session, outdir='data'):
+    if not os.path.exists(outdir):
+        os.makedirs(outdir)
+
     title = url.split('/')[-1]
-    filename = f'data/{title}'
+    filename = os.path.join(outdir, title)
 
-    if not force and os.path.exists(filename):
-        print(f"{filename} exists. skipped")
-
-    with get(url, stream=True) as page:
-        page.encoding = page.apparent_encoding
-        if page.status_code in [400, 404]:
-            print(f" {title} doesn't exist")
+    async with session.get(url) as page:
+        if page.status in [400, 404]:
+            print(f"...skipping {url}: doesn't exist")
         else:
-            with open(filename, 'w', encoding='utf-8') as f:
-                f.write(page.text)
+            data = await page.content.read()
+            async with aiofiles.open(filename, 'wb') as outfile:
+                await outfile.write(data)
+                print(f"{url} written")
 
-def download_scripts(force=False):
-    if not os.path.exists('data'):
-        os.makedirs('data')
 
-    urls = get_script_urls()
-    ln = len(urls)
+async def main():
+    async with aiohttp.ClientSession() as session:
+        await asyncio.gather(
+            *[download_script(url, session) for url in get_script_urls()]
+        )
 
-    # TODO: async and sessions
-    pool = ThreadPool(5).imap_unordered(download_script, urls, force)
 
-    for i, _ in enumerate(pool):
-        print(f"\r...downloading imsdb scripts ({i}/{ln})", end="")
-
-if __name__ == "__main__":
-    download_scripts()
+if __name__ == '__main__':
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(main())
