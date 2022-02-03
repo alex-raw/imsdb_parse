@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from argparse import RawDescriptionHelpFormatter
 import re
 import sys
 import logging
@@ -167,17 +168,36 @@ class Screenplay:
     def __init__(self, data, name):
         self.name = name
         self.raw = data
+        self.meta = {}
         self.lines = []
         self.unc = self.rm = 0
 
     def __len__(self):
         return len(self.lines)
 
+    def __repr__(self):
+        return f"Screenplay: {self.meta}"
+
     def parse_lines(self):
         self.lines = [Line(x, i).pre_tag() for i, x in enumerate(self.raw.splitlines())]
         return self
 
+    def extract_meta(self):
+        self.meta["title"] = re.findall('<td><h1>(.*?)</h1>', self.raw)
+        if len(self.meta) > 1:
+            logging.warning("Multiple titles found")
+        self.meta["authors"] = re.findall('w=(.*?)"', self.raw)
+        genres = re.findall('genre/(.*?)"', self.raw)
+        self.meta["genres"] = {x for x in genres if genres.count(x) > 1}
+        # get duplicates of this
+        return self
+
     def pre_format(self):
+        try:
+            self.raw = re.findall(r'(?<=<pre>).*(?=</pre>)', self.raw, re.S)[0]
+        except IndexError:
+            logging.warning('No <pre> tags found in %s', self.name)
+
         data = re.sub(r'<!--.*?-->|<.*?>|\(.?\)', '', self.raw, flags=re.S)
 
         # streamline brackets and latex-style quotes, remove some sporadic characters
@@ -278,8 +298,10 @@ def _join_blocks(script):
 
 
 def screenplay2xml(script, path):
+    for key, val in script.meta.items():
+        script.meta[key] = ', '.join(val)
     root = et.Element('')
-    root = et.SubElement(root, "screenplay",path=path)
+    root = et.SubElement(root, 'screenplay', script.meta)
 
     current_level = root
     scene = None
@@ -331,13 +353,7 @@ def _import_screenplay(path):
 
 def _main(path, interactive=False, force=False, xml=False):
     raw = _import_screenplay(path)
-
-    try:
-        raw = re.findall(r'(?<=<pre>).*(?=</pre>)', raw, re.S)[0]
-    except IndexError:
-        logging.warning('No <pre> tags found in %s', path)
-
-    screenplay = Screenplay(raw, path).pre_format().parse_lines()
+    screenplay = Screenplay(raw, path).extract_meta().pre_format().parse_lines()
 
     if len(screenplay) < 50:
         logging.error('File appears to be empty or incomplete: %s', screenplay.name)
@@ -382,3 +398,4 @@ if __name__ == '__main__':
                             level = args.debug or 'INFO')
 
     _main(args.path, args.annotate, args.force, args.xml)
+

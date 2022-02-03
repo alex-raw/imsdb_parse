@@ -5,6 +5,7 @@ for file in "${1}"/*; do
 done; wait
 
 cat "${1}"/*.log | grep -v '^INFO' > tagged.log &
+cat "${1}"/*.log | grep '^WARN' > warnings.log &
 cat "${1}"/*.log | grep '^INFO: [^c]' | sort -g > results.log &
 grep -P "\tRM." "${1}"/*.log | grep -Pv "\tRM.\s*$" > removed.log
 rm "${1}"/*.log
