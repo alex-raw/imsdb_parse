@@ -20,7 +20,6 @@ positives in dialogue detection. Ambiguous lines are parsed as `unc`
 
 ## Todos
 
-- crawl meta-data: title, authors, genre
 - include different websites as sources
 - detect and handle files with different styles, such as title case characters, or "character: dialogue"
 - further modularize, isolate xml formatting, further isolate cmdline features
