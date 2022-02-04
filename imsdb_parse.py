@@ -20,25 +20,23 @@ OMIT    = re.compile(r'\b(OMIT.*|DELETED)\b')
 SLUG         = re.compile(r"^([^a-z]*(Mc|\d(st|nd|rd|th)|'s)?)?[^a-z]+(\(.*?\))?$")
 INT_EXT      = re.compile(r'\b(INT|EXT)(ERIOR)?\b|\b(I\/E|E\/I)\b')
 PAR_PATTERN  = re.compile(r'^\([^\)]+$|^[^\(]+\)$')
-MISC_PATTERN = r'(FADE|CUT|THE END|POV|SCREEN|CREDITS?|TITLES|INTERCUT)'
-MISC_PATTERN = re.compile(r'(?<!^I):|^{x}\b|\b{x}$'.format(x=MISC_PATTERN))
+HEADINGS = r'(FADE|CUT|THE END|POV|SCREEN|CREDITS?|TITLES|INTERCUT)'
+MISC_HEADINGS = re.compile(r'(?<!^I):|^{x}\b|\b{x}$'.format(x=HEADINGS))
 
 # Catching page headers/footers
-DATES_R      = r'\d+?[\./]\d+?[\./]\d+'
+DATES        = r'\d+?[\./]\d+?[\./]\d+'
 MORE         = r'[\(\-]\W*\bM[\sORE]{2,}?\b\W*[\)\-]'
-CONTINUED_R  = r'\bCO\W?N\W?[TY](\W?D|INU\W?(ED|ING|ES))?\s*\b'
-IDS_R        = r'\D?\d+\D?\d*\.?'
-CONT_MORE_R  = r'^({n})?[\W\d]*({}|{})[\W\d]*({n})?$'.format(CONTINUED_R, MORE, n=IDS_R)
-NUMBERED     = re.compile(r'^{n}|{n}$'.format(n=IDS_R))
-PAGE_HEADERS = r'(rev(\.|isions?)?|draft|screenplay|shooting|progress|scene deleted|pdf)'
-PAGE_HEADERS = re.compile(r'\b%s\b' % PAGE_HEADERS, re.I)
-DATE         = re.compile(DATES_R)
-CONTINUED    = re.compile(CONTINUED_R)
-CONT_MORE    = re.compile(CONT_MORE_R, re.I)
-DATE_HEADERS = re.compile(r'%s\s%s$' % (DATES_R, IDS_R))
+CONT         = r'\bCO\W?N\W?[TY](\W?D|INU\W?(ED|ING|ES))?\s*\b'
+IDS          = r'\D?\d+\D?\d*\.?'
+NUMBERED     = re.compile(r'^{n}|{n}$'.format(n=IDS))
+PAGE_HEADERS = re.compile(r'\b(rev(\.|isions?)?|draft|screenplay|shooting|progress|scene deleted|pdf)\b', re.I)
+CONTINUED    = re.compile(CONT)
+CONT_MORE    = re.compile(r'^({n})?[\W\d]*({}|{})[\W\d]*({n})?$'.format(CONT, MORE, n=IDS), re.I)
+DATE_HEADERS = re.compile(r'%s\s%s$' % (DATES, IDS))
 PAGE         = re.compile(r'\b(PAGE|pg)\b[\s\.]?\d')
-PAIRED_NUM   = re.compile(r'^(%s).{3,}?\1$' % IDS_R)
-IDS          = re.compile(IDS_R)
+PAIRED_NUM   = re.compile(r'^(%s).{3,}?\1$' % IDS)
+DATE         = re.compile(DATES)
+IDS          = re.compile(IDS)
 
 CLUTTER  = ['remove', 'date', 'cont']
 PRE_TAGS = CLUTTER + ['unc', 'slug']
