@@ -353,7 +353,7 @@ def _import_screenplay(path):
 
 def _main(path, interactive=False, force=False, xml=False):
     raw = _import_screenplay(path)
-    screenplay = Screenplay(raw, path).pre_format().parse_lines()
+    screenplay = Screenplay(raw, path).extract_meta().parse_lines()
 
     if len(screenplay.lines) < 50:
         logging.error('File appears to be empty or incomplete: %s', screenplay.name)
