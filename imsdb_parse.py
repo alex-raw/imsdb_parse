@@ -9,39 +9,39 @@ from itertools import tee
 import xml.etree.ElementTree as et
 
 # pre compile regex for readability and performance in loop
-ws      = re.compile(r'\s+')
-non_ws  = re.compile(r'\S')
-par     = re.compile(r'^[\(\{].+[\)\}]$')
-empty   = re.compile(r'^\W+$')
-num     = re.compile(r'^\D?\d{1,3}\D{0,2}(\s\d*)?\s*$')
-omit    = re.compile(r'\b(OMIT.*|DELETED)\b')
+WS      = re.compile(r'\s+')
+NON_WS  = re.compile(r'\S')
+PAR     = re.compile(r'^[\(\{].+[\)\}]$')
+EMTPY   = re.compile(r'^\W+$')
+NUM     = re.compile(r'^\D?\d{1,3}\D{0,2}(\s\d*)?\s*$')
+OMIT    = re.compile(r'\b(OMIT.*|DELETED)\b')
 
 # catch: 1st WOMAN, 2nd FLOOR, ... McCAMERON, NAME (lower case par), CROW's
-slug          = re.compile(r"^([^a-z]*(Mc|\d(st|nd|rd|th)|'s)?)?[^a-z]+(\(.*?\))?$")
-int_ext       = re.compile(r'\b(INT|EXT)(ERIOR)?\b|\b(I\/E|E\/I)\b')
-par_pattern   = re.compile(r'^\([^\)]+$|^[^\(]+\)$')
-misc_headings = r'(FADE|CUT|THE END|POV|SCREEN|CREDITS?|TITLES|INTERCUT)'
-misc_headings = re.compile(r'(?<!^I):|^{x}\b|\b{x}$'.format(x=misc_headings))
+SLUG         = re.compile(r"^([^a-z]*(Mc|\d(st|nd|rd|th)|'s)?)?[^a-z]+(\(.*?\))?$")
+INT_EXT      = re.compile(r'\b(INT|EXT)(ERIOR)?\b|\b(I\/E|E\/I)\b')
+PAR_PATTERN  = re.compile(r'^\([^\)]+$|^[^\(]+\)$')
+MISC_PATTERN = r'(FADE|CUT|THE END|POV|SCREEN|CREDITS?|TITLES|INTERCUT)'
+MISC_PATTERN = re.compile(r'(?<!^I):|^{x}\b|\b{x}$'.format(x=MISC_PATTERN))
 
 # Catching page headers/footers
-dates_r      = r'\d+?[\./]\d+?[\./]\d+'
-more         = r'[\(\-]\W*\bM[\sORE]{2,}?\b\W*[\)\-]'
-continued_r  = r'\bCO\W?N\W?[TY](\W?D|INU\W?(ED|ING|ES))?\s*\b'
-ids_r          = r'\D?\d+\D?\d*\.?'
-cont_more_r  = r'^({n})?[\W\d]*({}|{})[\W\d]*({n})?$'.format(continued_r, more, n=ids_r)
-numbered     = re.compile(r'^{n}|{n}$'.format(n=ids_r))
-page_headers = r'(rev(\.|isions?)?|draft|screenplay|shooting|progress|scene deleted|pdf)'
-page_headers = re.compile(r'\b%s\b' % page_headers, re.I)
-date         = re.compile(dates_r)
-continued    = re.compile(continued_r)
-cont_more    = re.compile(cont_more_r, re.I)
-date_headers = re.compile(r'%s\s%s$' % (dates_r, ids_r))
-page         = re.compile(r'\b(PAGE|pg)\b[\s\.]?\d')
-paired_num   = re.compile(r'^(%s).{3,}?\1$' % ids_r)
-ids          = re.compile(ids_r)
+DATES_R      = r'\d+?[\./]\d+?[\./]\d+'
+MORE         = r'[\(\-]\W*\bM[\sORE]{2,}?\b\W*[\)\-]'
+CONTINUED_R  = r'\bCO\W?N\W?[TY](\W?D|INU\W?(ED|ING|ES))?\s*\b'
+IDS_R        = r'\D?\d+\D?\d*\.?'
+CONT_MORE_R  = r'^({n})?[\W\d]*({}|{})[\W\d]*({n})?$'.format(CONTINUED_R, MORE, n=IDS_R)
+NUMBERED     = re.compile(r'^{n}|{n}$'.format(n=IDS_R))
+PAGE_HEADERS = r'(rev(\.|isions?)?|draft|screenplay|shooting|progress|scene deleted|pdf)'
+PAGE_HEADERS = re.compile(r'\b%s\b' % PAGE_HEADERS, re.I)
+DATE         = re.compile(DATES_R)
+CONTINUED    = re.compile(CONTINUED_R)
+CONT_MORE    = re.compile(CONT_MORE_R, re.I)
+DATE_HEADERS = re.compile(r'%s\s%s$' % (DATES_R, IDS_R))
+PAGE         = re.compile(r'\b(PAGE|pg)\b[\s\.]?\d')
+PAIRED_NUM   = re.compile(r'^(%s).{3,}?\1$' % IDS_R)
+IDS          = re.compile(IDS_R)
 
-clutter  = ['remove', 'date', 'cont']
-pre_tags = clutter + ['unc', 'slug']
+CLUTTER  = ['remove', 'date', 'cont']
+PRE_TAGS = CLUTTER + ['unc', 'slug']
 
 
 class Line:
@@ -49,23 +49,23 @@ class Line:
         self.raw    = raw
         self.ind    = ind
         self.break_after = False
-        self.clean  = ws.sub(' ', raw).strip()
-        self.slug   = slug.search(self.clean)
-        self.par    = par.search(self.clean)
+        self.clean  = WS.sub(' ', raw).strip()
+        self.slug   = SLUG.search(self.clean)
+        self.par    = PAR.search(self.clean)
         self.tag    = 'slug' if self.slug else 'unc'
-        indent      = non_ws.search(raw)
+        indent      = NON_WS.search(raw)
         self.indent = indent.span()[1] if indent else 0
 
     def __str__(self):
         return '%d\t%s\t\t%s' % (self.ind, self.tag, self.raw)
 
     def pre_tag(self):
-        patterns = (('remove', empty), ('remove', num), ('remove', omit),
-                    ('hdg', int_ext),
-                    ('date', date),
-                    ('cont', continued),
-                    ('par', par),
-                    ('slug', slug)
+        patterns = (('remove', EMTPY), ('remove', NUM), ('remove', OMIT),
+                    ('hdg', INT_EXT),
+                    ('date', DATE),
+                    ('cont', CONTINUED),
+                    ('par', PAR),
+                    ('slug', SLUG)
                    )
 
         for tag, pattern in patterns:
@@ -73,7 +73,7 @@ class Line:
                 self.tag = tag
                 break
 
-        if self.tag not in clutter and self.slug and paired_num.search(self.clean):
+        if self.tag not in CLUTTER and self.slug and PAIRED_NUM.search(self.clean):
             self.tag = 'hdg'
 
         if self.tag in ['hdg', 'par', 'trans']:
@@ -89,11 +89,11 @@ class Line:
             not prv.tag in ['char', 'par', 'dlg'] or
             not self.indent == prv.indent
         ) or (
-            page.search(self.clean) or
-            date_headers.search(self.clean) or
-            cont_more.search(self.clean) or
-            page_headers.search(self.clean) and (
-                 numbered.search(self.clean) or date.search(self.clean)
+            PAGE.search(self.clean) or
+            DATE_HEADERS.search(self.clean) or
+            CONT_MORE.search(self.clean) or
+            PAGE_HEADERS.search(self.clean) and (
+                 NUMBERED.search(self.clean) or DATE.search(self.clean)
         ))
 
     def detect_tag(self, prv, nxt):
@@ -102,9 +102,9 @@ class Line:
         tag = self.tag
         start = prv.break_after
 
-        if tag in pre_tags and self.slug:
+        if tag in PRE_TAGS and self.slug:
             # reserve some unambiguous slugs as trans to prevent them from being overridden
-            if misc_headings.search(self.clean):
+            if MISC_PATTERN.search(self.clean):
                 tag = 'trans'
             elif nxt.tag == 'par' or nxt_dif > 0 and not self.par and (
                 prv_dif > 0 or start and not self.break_after):
@@ -121,7 +121,7 @@ class Line:
                     tag = prv.tag
 
         # infer from previous tags
-        if tag in pre_tags:
+        if tag in PRE_TAGS:
             if prv.tag == 'char':
                 tag = 'dlg'
             elif prv.tag in ['hdg', 'trans', 'slug']:
@@ -131,14 +131,14 @@ class Line:
                     tag = 'act'
 
         # catch some pars with missing open or close pars
-        if tag in pre_tags and par_pattern.search(self.clean):
+        if tag in PRE_TAGS and PAR_PATTERN.search(self.clean):
             tag = 'par'
 
         if tag == 'par' and prv.tag not in ['dlg', 'char', 'slug'] and not start:
             tag = prv.tag
 
         # tolerate slight difference in indentation
-        if tag in pre_tags + ['act']:
+        if tag in PRE_TAGS + ['act']:
             if abs(prv_dif) <= 1 and (prv.tag in 'act' or prv.tag == 'dlg' and not start):
                 tag = prv.tag
 
@@ -150,7 +150,7 @@ class Line:
             prv.tag = 'unc'
 
         # carry over tags in dialogue blocks
-        if nxt.tag in pre_tags:
+        if nxt.tag in PRE_TAGS:
             if tag == 'par':
                 if prv.tag == 'char':
                     nxt.tag = 'dlg'
@@ -236,7 +236,7 @@ def tag_screenplay(script, interactive=False, force=False):
 
         cur.detect_tag(prv, nxt)
 
-        if not force and (cur.tag in clutter or not cur.indent):
+        if not force and (cur.tag in CLUTTER or not cur.indent):
             cur.tag = 'RM2'
             script.rm += 1
             del inds[i+1]
@@ -287,10 +287,10 @@ def screenplay2xml(script, path):
             continue
 
         if tag == 'hdg':
-            n = ids.findall(line)
+            n = IDS.findall(line)
             scene = et.SubElement(root, 'scene',
                 id = n[0] if n else '',
-                heading = ids.sub('', line)
+                heading = IDS.sub('', line)
             )
 
             hdg = et.SubElement(scene, 'hdg')
