@@ -51,7 +51,6 @@ class Line:
         self.break_after = False
         self.clean  = WS.sub(' ', raw).strip()
         self.slug   = SLUG.search(self.clean)
-        self.par    = PAR.search(self.clean)
         self.tag    = 'slug' if self.slug else 'unc'
         indent      = NON_WS.search(raw)
         self.indent = indent.span()[1] if indent else 0
@@ -83,36 +82,39 @@ class Line:
 
     # discard if empty or if not potentially part of dialogue
     def is_clutter(self, prv) -> bool:
+        line = self.clean
         return not self.indent or (
             self.tag in ['remove', 'date']
             ) and (
             not prv.tag in ['char', 'par', 'dlg'] or
             not self.indent == prv.indent
-        ) or (
-            PAGE.search(self.clean) or
-            DATE_HEADERS.search(self.clean) or
-            CONT_MORE.search(self.clean) or
-            PAGE_HEADERS.search(self.clean) and (
-                 NUMBERED.search(self.clean) or DATE.search(self.clean)
-        ))
+        ) or bool(
+            PAGE.search(line) or
+            DATE_HEADERS.search(line) or
+            CONT_MORE.search(line) or
+            PAGE_HEADERS.search(line) and (
+                NUMBERED.search(line) or DATE.search(line))
+        )
 
     def detect_tag(self, prv, nxt):
+        tag     = self.tag
         prv_dif = self.indent - prv.indent
         nxt_dif = self.indent - nxt.indent
-        tag = self.tag
-        start = prv.break_after
+        start   = prv.break_after
+        end     = self.break_after
+        ispar   = PAR.search(self.clean)
 
         if tag in PRE_TAGS and self.slug:
             # reserve some unambiguous slugs as trans to prevent them from being overridden
-            if MISC_PATTERN.search(self.clean):
+            if MISC_HEADINGS.search(self.clean):
                 tag = 'trans'
-            elif nxt.tag == 'par' or nxt_dif > 0 and not self.par and (
-                prv_dif > 0 or start and not self.break_after):
+            elif nxt.tag == 'par' or nxt_dif and not ispar and (
+                prv_dif or start and not end):
                 tag = 'char'
 
         # remove date and cont tags when likely part of block to prevent deletion
         if tag in ['date', 'cont'] and (not start or not self.slug):
-            if self.par:
+            if ispar:
                 tag = 'par'
             elif abs(prv_dif) < 5:
                 if prv.tag == 'hdg':
@@ -127,20 +129,20 @@ class Line:
             elif prv.tag in ['hdg', 'trans', 'slug']:
                 tag = 'act'
             elif prv.tag in ['dlg', 'act']:
-                if not self.slug and prv_dif < 0:
+                if not self.slug and prv_dif:
                     tag = 'act'
 
         # catch some pars with missing open or close pars
         if tag in PRE_TAGS and PAR_PATTERN.search(self.clean):
             tag = 'par'
 
-        if tag == 'par' and prv.tag not in ['dlg', 'char', 'slug'] and not start:
+        if tag == 'par' and not start and prv.tag not in ['dlg', 'char', 'slug']:
             tag = prv.tag
 
         # tolerate slight difference in indentation
-        if tag in PRE_TAGS + ['act']:
-            if abs(prv_dif) <= 1 and (prv.tag in 'act' or prv.tag == 'dlg' and not start):
-                tag = prv.tag
+        if tag in PRE_TAGS + ['act'] and abs(prv_dif) <= 1 and (
+            prv.tag == 'act' or prv.tag == 'dlg' and not start):
+            tag = prv.tag
 
         # reset trans to general slug
         if tag in ['trans', 'act'] and self.slug:
@@ -157,7 +159,7 @@ class Line:
                 elif abs(nxt.indent - prv.indent) <= 1:
                     nxt.tag = prv.tag
             if tag == 'act' and prv.tag == 'dlg' and nxt.indent == prv.indent and (
-                not start and not self.break_after):
+                not start and not end):
                 nxt.tag = 'dlg'
 
         self.tag = tag
@@ -167,14 +169,36 @@ class Screenplay:
     def __init__(self, data, name):
         self.name = name
         self.raw = data
-        self.lines = None
+        self.meta = {}
+        self.lines = []
         self.unc = self.rm = 0
+
+    def __len__(self):
+        return len(self.lines)
+
+    def __repr__(self):
+        return "Screenplay: {}".format(self.meta)
 
     def parse_lines(self):
         self.lines = [Line(x, i).pre_tag() for i, x in enumerate(self.raw.splitlines())]
         return self
 
+    def extract_meta(self):
+        self.meta["title"] = re.findall('<td><h1>(.*?)</h1>', self.raw)
+        if len(self.meta) > 1:
+            logging.warning("Multiple titles found")
+        self.meta["authors"] = re.findall('w=(.*?)"', self.raw)
+        genres = re.findall('genre/(.*?)"', self.raw)
+        self.meta["genres"] = {x for x in genres if genres.count(x) > 1}
+        # get duplicates of this
+        return self
+
     def pre_format(self):
+        try:
+            self.raw = re.findall(r'(?<=<pre>).*(?=</pre>)', self.raw, re.S)[0]
+        except IndexError:
+            logging.warning('No <pre> tags found in %s', self.name)
+
         data = re.sub(r'<!--.*?-->|<.*?>|\(.?\)', '', self.raw, flags = re.S)
 
         # streamline brackets and latex-style quotes, remove some sporadic characters
@@ -201,17 +225,17 @@ class Screenplay:
 
 
 def _annotate(prv, cur, nxt, ln, force):
-    m = dedent("""\
+    prompt = dedent('''\
     ---------->\t\t%s
     %s
 
     Leave blank to discard line;
     type 'start' to exit force mode; type 'exit' to continue in auto mode
-    (%d/%d) Enter tag: """ % (cur.raw, str(nxt), cur.ind, ln))
+    (%d/%d) Enter tag: ''' % (cur.raw, nxt, cur.ind, ln))
 
     print(prv, file=sys.stderr)
     if force or cur.tag == 'unc':
-        print(m, file=sys.stderr)
+        print(prompt, file=sys.stderr)
         user_tag = input()
         return user_tag
     return cur.tag
@@ -276,9 +300,11 @@ def _join_blocks(script):
             line = b.clean
 
 
-def screenplay2xml(script, path):
+def screenplay2xml(script):
+    for key, val in script.meta.items():
+        script.meta[key] = ', '.join(val)
     root = et.Element('')
-    root = et.SubElement(root, "screenplay",path=path)
+    root = et.SubElement(root, "screenplay", script.meta)
 
     current_level = root
     scene = None
@@ -292,7 +318,6 @@ def screenplay2xml(script, path):
                 id = n[0] if n else '',
                 heading = IDS.sub('', line)
             )
-
             hdg = et.SubElement(scene, 'hdg')
             hdg.text = line
             current_level = scene
@@ -303,7 +328,6 @@ def screenplay2xml(script, path):
                 char = re.sub(r'\s?\(.*\)', '', line),
                 ext = par[0] if par else ''
             )
-
             char = et.SubElement(turn, 'char')
             char.text = line
             current_level = turn
@@ -331,12 +355,6 @@ def _import_screenplay(path):
 
 def _main(path, interactive=False, force=False, xml=False):
     raw = _import_screenplay(path)
-
-    try:
-        raw = re.findall(r'(?<=<pre>).*(?=</pre>)', raw, re.S)[0]
-    except IndexError:
-        logging.warning('No <pre> tags found in %s', path)
-
     screenplay = Screenplay(raw, path).pre_format().parse_lines()
 
     if len(screenplay.lines) < 50:
@@ -348,11 +366,11 @@ def _main(path, interactive=False, force=False, xml=False):
     logging.debug('\n%s', '\n'.join([str(line) for line in screenplay.lines]))
 
     unc = screenplay.unc
-    ln = len(screenplay.lines) - screenplay.rm
+    ln = len(screenplay) - screenplay.rm
     logging.info('%.3f unclassified: %d/%d in %s', unc/ln, unc, ln, screenplay.name)
 
     if xml:
-        tree = screenplay2xml(screenplay, path)
+        tree = screenplay2xml(screenplay)
         out_path = path.replace('.html', '') + '.xml'
         tree.write(out_path, encoding ='utf-8')
         logging.info('created %s', out_path)
