@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-from argparse import RawDescriptionHelpFormatter
 import re
 import sys
 import logging
