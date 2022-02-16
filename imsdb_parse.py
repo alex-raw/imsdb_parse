@@ -225,7 +225,7 @@ class Screenplay:
 def _annotate(prv, cur, nxt, ln, force):
     prompt = dedent(f'''\
     ---------->\t\t{cur.raw}
-    {str(nxt)}
+    {nxt}
 
     Leave blank to discard line;
     type 'start' to exit force mode; type 'exit' to continue in auto mode
